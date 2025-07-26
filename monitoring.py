@@ -16,6 +16,7 @@ CYCLE_LATENCY_MS = Gauge("cycle_latency_ms", "Loop latency ms",           ["sym"
 ORDERS_ACTIVE    = Gauge("orders_active",    "Active orders flag",        ["sym"])
 POSITION_SIZE    = Gauge("position_size",    "Position size",             ["sym"])
 ERROR_COUNTER    = Counter("error_total",    "Total errors",              ["type"])
+WS_RECONNECTS    = Counter("ws_reconnect_total", "WebSocket reconnects")
 
 async def metrics_handler(_: web.Request):
     return web.Response(body=generate_latest(), content_type=CONTENT_TYPE_LATEST)
@@ -35,3 +36,4 @@ async def heartbeat():
     while True:
         POSITION_SIZE.labels(sym="heartbeat").set(time.time())
         await asyncio.sleep(15)
+
