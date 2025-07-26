@@ -36,3 +36,4 @@ def setup_logger() -> logging.Logger:
     return logger
 
 setup_logger()
+
