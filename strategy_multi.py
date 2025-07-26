@@ -26,11 +26,20 @@ class ArbitrageStrategyMulti:
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         for sym in config.TRADE_PAIRS:
             env = DummyVecEnv([_EdgeEnv])
-            self.policies[sym] = PPO("MlpPolicy", env, verbose=0, device=device,
-                                     n_steps=128, batch_size=64)
-            self.roll[sym] = Roll(deque(maxlen=config.RL_BUFFER_CAP),
-                                  deque(maxlen=config.RL_BUFFER_CAP),
-                                  deque(maxlen=config.RL_BUFFER_CAP))
+            path = config.get_model_path(sym)
+            if path.exists():
+                self.policies[sym] = PPO.load(path, env=env, device=device)
+                logger.info("Loaded policy %s", path)
+            else:
+                self.policies[sym] = PPO(
+                    "MlpPolicy", env, verbose=0, device=device,
+                    n_steps=128, batch_size=64
+                )
+            self.roll[sym] = Roll(
+                deque(maxlen=config.RL_BUFFER_CAP),
+                deque(maxlen=config.RL_BUFFER_CAP),
+                deque(maxlen=config.RL_BUFFER_CAP),
+            )
         asyncio.create_task(self._ppo_trainer())
 
     async def analyze(self, sym: str) -> Tuple[str, Decimal]:
@@ -58,6 +67,9 @@ class ArbitrageStrategyMulti:
                 env.buf_obs[:]  = obs
                 env.buf_rew[:]  = rews
                 env.buf_act[:]  = acts
-                self.policies[sym].learn(total_timesteps=len(obs), reset_num_timesteps=False)
+                self.policies[sym].learn(
+                    total_timesteps=len(obs), reset_num_timesteps=False
+                )
+                self.policies[sym].save(config.get_model_path(sym))
                 roll.obs.clear(); roll.acts.clear(); roll.rews.clear()
                 logger.info("PPO updated %s (%s steps)", sym, len(obs))

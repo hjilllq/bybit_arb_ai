@@ -10,6 +10,7 @@ from monitoring import (CYCLE_LATENCY_MS, ORDERS_ACTIVE, PNL_TOTAL, PNL_UNREAL,
 from rebalancer import smart_rebalance
 from slippage_sim import SlippageSimulator
 from strategy_multi import ArbitrageStrategyMulti
+from trade_logger import TradeLogger
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class TradingBotMulti:
         self.client = APIClient()
         self.sim = SlippageSimulator(self.client)
         self.strategy = ArbitrageStrategyMulti(self.client)
+        self.tlog = TradeLogger()
         self.position: Dict[str, Decimal] = {s: Decimal() for s in config.TRADE_PAIRS}
         self.entry: Dict[str, Decimal | None] = {s: None for s in config.TRADE_PAIRS}
         self.real: Dict[str, Decimal] = {s: Decimal() for s in config.TRADE_PAIRS}
@@ -53,6 +55,7 @@ class TradingBotMulti:
         slip  = abs((worst-price)/price)
         if slip > self.SLIP_TOL * edge: return  # проскальзывание велико
         await self.client.place_order(sym, side, qty)
+        self.tlog.log(sym, side, qty, price, edge, slip)
         ORDERS_ACTIVE.labels(sym=sym).set(1)
         delta = qty if side == "Buy" else -qty
         if not self.entry[sym]: self.entry[sym] = price
@@ -73,3 +76,4 @@ class TradingBotMulti:
         PNL_TOTAL.labels(sym=sym).set(float(self.real[sym]))
 
     async def close(self): await self.client.close()
+
