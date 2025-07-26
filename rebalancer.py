@@ -23,3 +23,4 @@ async def smart_rebalance(client: "APIClient", bot: "TradingBotMulti"):  # noqa:
                 logger.info("Rebalance %s %s %.6f", sym, side, qty)
         except Exception as exc:
             logger.warning("Rebalance err: %s", exc)
+

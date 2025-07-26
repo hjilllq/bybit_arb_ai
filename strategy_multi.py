@@ -4,9 +4,26 @@ from collections import deque
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Dict, Tuple
-import numpy as np, torch
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency
+    np = None
+try:
+    import torch
+except ImportError:  # pragma: no cover - optional dependency
+    class _TorchDummy:
+        class backends:
+            class mps:
+                @staticmethod
+                def is_available() -> bool:
+                    return False
+    torch = _TorchDummy()
+try:
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import DummyVecEnv
+except ImportError:  # pragma: no cover - optional dependency
+    PPO = None
+    DummyVecEnv = lambda *a, **k: None  # type: ignore
 import config
 
 logger = logging.getLogger(__name__)
@@ -21,21 +38,38 @@ class _EdgeEnv:
 class ArbitrageStrategyMulti:
     def __init__(self, client: "APIClient"):  # noqa: F821
         self.client = client
-        self.policies: Dict[str, PPO] = {}
+        self.policies: Dict[str, PPO | None] = {}
         self.roll: Dict[str, Roll] = {}
+        if PPO is None or np is None:
+            # fallback: dummy strategy
+            for sym in config.TRADE_PAIRS:
+                self.policies[sym] = None
+                self.roll[sym] = Roll(deque(maxlen=1), deque(maxlen=1), deque(maxlen=1))
+            return
         device = "mps" if torch.backends.mps.is_available() else "cpu"
         for sym in config.TRADE_PAIRS:
             env = DummyVecEnv([_EdgeEnv])
-            self.policies[sym] = PPO("MlpPolicy", env, verbose=0, device=device,
-                                     n_steps=128, batch_size=64)
-            self.roll[sym] = Roll(deque(maxlen=config.RL_BUFFER_CAP),
-                                  deque(maxlen=config.RL_BUFFER_CAP),
-                                  deque(maxlen=config.RL_BUFFER_CAP))
+            path = config.get_model_path(sym)
+            if path.exists():
+                self.policies[sym] = PPO.load(path, env=env, device=device)
+                logger.info("Loaded policy %s", path)
+            else:
+                self.policies[sym] = PPO(
+                    "MlpPolicy", env, verbose=0, device=device,
+                    n_steps=128, batch_size=64
+                )
+            self.roll[sym] = Roll(
+                deque(maxlen=config.RL_BUFFER_CAP),
+                deque(maxlen=config.RL_BUFFER_CAP),
+                deque(maxlen=config.RL_BUFFER_CAP),
+            )
         asyncio.create_task(self._ppo_trainer())
 
     async def analyze(self, sym: str) -> Tuple[str, Decimal]:
         bid, ask = await self.client.get_best(sym)
         edge = (bid - ask) / ask - config.SPOT_FEE_RATE - config.FUTURES_FEE_TAKER
+        if PPO is None or np is None or self.policies[sym] is None:
+            return "hold", Decimal(str(edge))
         idx, _ = self.policies[sym].predict(np.array([[float(edge)]]), deterministic=True)
         action_map = {0: "hold", 1: "buy_spot", 2: "sell_spot"}
         action = action_map.get(int(idx), "hold")
@@ -46,6 +80,8 @@ class ArbitrageStrategyMulti:
         r = self.roll[sym]; r.obs.append(edge); r.acts.append(idx); r.rews.append(edge)
 
     async def _ppo_trainer(self):
+        if PPO is None or np is None:
+            return
         while True:
             await asyncio.sleep(config.RL_UPDATE_SEC)
             for sym, roll in self.roll.items():
@@ -53,11 +89,14 @@ class ArbitrageStrategyMulti:
                     continue
                 env = self.policies[sym].env
                 obs = np.array(roll.obs).reshape(-1, 1)
-                acts= np.array(roll.acts).reshape(-1, 1)
-                rews= np.array(roll.rews).reshape(-1, 1)
-                env.buf_obs[:]  = obs
-                env.buf_rew[:]  = rews
-                env.buf_act[:]  = acts
-                self.policies[sym].learn(total_timesteps=len(obs), reset_num_timesteps=False)
+                acts = np.array(roll.acts).reshape(-1, 1)
+                rews = np.array(roll.rews).reshape(-1, 1)
+                env.buf_obs[:] = obs
+                env.buf_rew[:] = rews
+                env.buf_act[:] = acts
+                self.policies[sym].learn(
+                    total_timesteps=len(obs), reset_num_timesteps=False
+                )
+                self.policies[sym].save(config.get_model_path(sym))
                 roll.obs.clear(); roll.acts.clear(); roll.rews.clear()
                 logger.info("PPO updated %s (%s steps)", sym, len(obs))
