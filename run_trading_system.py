@@ -1,12 +1,16 @@
 from __future__ import annotations
 import asyncio, logging, signal, sys
 from types import FrameType
-import uvloop, config
+import config
 from logger import setup_logger
 from monitoring import heartbeat, start_metrics_server
 from trading_multi import TradingBotMulti
 
-uvloop.install()
+try:
+    import uvloop
+    uvloop.install()
+except Exception:
+    pass
 setup_logger()
 logger = logging.getLogger(__name__)
 
