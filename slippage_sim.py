@@ -24,3 +24,4 @@ class SlippageSimulator:
                 break
             remain -= size
         return worst
+

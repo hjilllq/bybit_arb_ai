@@ -3,6 +3,7 @@ import asyncio, logging
 from decimal import Decimal
 import config
 from retry_utils import retry_async
+from error_manager import ERROR_TRACKER
 
 logger = logging.getLogger(__name__)
 MIN_IMBAL_QTY = Decimal("0.0001")
@@ -23,3 +24,5 @@ async def smart_rebalance(client: "APIClient", bot: "TradingBotMulti"):  # noqa:
                 logger.info("Rebalance %s %s %.6f", sym, side, qty)
         except Exception as exc:
             logger.warning("Rebalance err: %s", exc)
+            ERROR_TRACKER.record()
+
