@@ -3,7 +3,11 @@ import asyncio, logging, smtplib, time
 from collections import deque
 from email.message import EmailMessage
 from typing import Deque, Optional
-import aiohttp, config
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - optional dependency
+    aiohttp = None
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +71,9 @@ class AlertCenter:
             logger.warning("Email alert error: %s", exc)
 
     async def _send_tg(self, text: str):
+        if aiohttp is None:
+            logger.warning("Telegram alert skipped: aiohttp not installed")
+            return
         try:
             async with aiohttp.ClientSession() as sess:
                 await sess.post(
