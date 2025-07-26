@@ -30,6 +30,7 @@ CATEGORY_MAP = {s: "linear" for s in TRADE_PAIRS}
 MARGIN_MODE            = os.getenv("MARGIN_MODE", "CROSS").upper()
 LEVERAGE               = Decimal(os.getenv("LEVERAGE", "1"))
 MAX_POSITION_PERCENT   = Decimal(os.getenv("MAX_POSITION_PERCENT", "0.10"))
+MAX_POSITION_USD       = Decimal(os.getenv("MAX_POSITION_USD", "1000"))
 
 INCLUDE_FEES           = os.getenv("INCLUDE_FEES", "false").lower() in ("true", "1", "yes")
 SPOT_FEE_RATE          = Decimal(os.getenv("SPOT_FEE_RATE", "0.0010"))
@@ -39,16 +40,44 @@ FUTURES_FEE_MAKER      = Decimal(os.getenv("FUTURES_FEE_MAKER_RATE", "0.00020"))
 FUNDING_INTERVAL_HOURS = int(os.getenv("FUNDING_INTERVAL_HOURS",  "8"))
 MIN_FUNDING_THRESHOLD  = Decimal(os.getenv("MIN_FUNDING_THRESHOLD", "0.0001"))
 
+# максимальный допустимый убыток в долларах, после которого бот остановится
+MAX_DRAWDOWN_USD = Decimal(os.getenv("MAX_DRAWDOWN_USD", "100"))
+
+# capital management parameters
+ACCOUNT_EQUITY_USD      = Decimal(os.getenv("ACCOUNT_EQUITY_USD", "10000"))
+RISK_PER_TRADE          = Decimal(os.getenv("RISK_PER_TRADE", "0.01"))  # 1% risk
+DAILY_DRAWDOWN_USD      = Decimal(os.getenv("DAILY_DRAWDOWN_USD", "500"))
+MAX_CONSECUTIVE_LOSSES  = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "3"))
+VOL_WINDOW              = int(os.getenv("VOL_WINDOW", "50"))
+STOP_MULTIPLIER         = Decimal(os.getenv("STOP_MULTIPLIER", "2"))
+
 USE_RL_MODEL  = os.getenv("USE_RL_MODEL", "true").lower() in ("true", "1", "yes")
 RL_MODEL_PATH = Path(os.getenv("RL_MODEL_PATH", "./policies/ppo_latest.zip"))
 RL_UPDATE_SEC = int(os.getenv("RL_UPDATE_SEC", "30"))
 RL_MIN_ROLLOUT= int(os.getenv("RL_MIN_ROLLOUT", "512"))
 RL_BUFFER_CAP = 2048
 
-PROM_HOST  = os.getenv("PROM_HOST", "0.0.0.0")
-PROM_PORT  = int(os.getenv("PROM_PORT", "9100"))
+PROM_HOST = os.getenv("PROM_HOST", "0.0.0.0")
+PROM_PORT = int(os.getenv("PROM_PORT", "9100"))
 
-LOG_LEVEL  = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FILE   = LOG_DIR / "bot.log"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE  = LOG_DIR / "bot.log"
+
+EMAIL_ENABLED  = os.getenv("EMAIL_ENABLED", "0").lower() in ("1", "true", "yes")
+EMAIL_SENDER   = os.getenv("EMAIL_SENDER", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+ALERT_EMAILS   = os.getenv("ALERT_EMAILS", "")
+TG_BOT_TOKEN   = os.getenv("TG_BOT_TOKEN", "")
+TG_CHAT_ID     = os.getenv("TG_CHAT_ID", "")
+
+def get_model_path(sym: str) -> Path:
+    """Return RL model path for a trading pair."""
+    p = RL_MODEL_PATH
+    if "{sym}" in str(p):
+        return Path(str(p).format(sym=sym))
+    return p.with_name(f"{p.stem}_{sym}{p.suffix}")
 
 getcontext().prec = 18
+
+# файл для записи сделок
+TRADE_LOG = LOG_DIR / "trades.csv"
