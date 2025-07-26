@@ -1,12 +1,22 @@
 from __future__ import annotations
-import asyncio, hashlib, hmac, json, logging, time, uuid
+import asyncio, logging, time, uuid
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Dict, Tuple
-import aiohttp, config
-from retry_utils import retry_async
+from typing import Dict, List, Tuple
+import config
 from ws_manager import WSManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Order:
+    id: str
+    symbol: str
+    side: str
+    qty: Decimal
+    price: Decimal
+    ts: float
 
 class _Limiter:
     def __init__(self, rps: int = 60) -> None:
@@ -20,74 +30,51 @@ class _Limiter:
         self.calls.append(time.perf_counter())
 
 class APIClient:
+    """Минимальный клиент Bybit для офлайн-демо."""
+
     PUB = _Limiter(150)
     PRI = _Limiter(60)
 
-    def __init__(self):
-        self.base, self.key, self.sec = (
-            config.BYBIT_API_BASE_URL, config.API_KEY, config.API_SECRET.encode())
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.))
+    def __init__(self) -> None:
         self.ws = WSManager(self)
-
-    # подпись
-    def _sign(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        ts = str(int(time.time() * 1000))
-        params.update({"api_key": self.key, "timestamp": ts})
-        query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-        params["sign"] = hmac.new(self.sec, query.encode(), hashlib.sha256).hexdigest()
-        return params
+        self.position: Dict[str, Decimal] = {s: Decimal() for s in config.TRADE_PAIRS}
+        self.orders: List[Order] = []
 
     async def _call(self, m: str, path: str, params=None, private=False):
-        url = f"{self.base}{path}"; params = params or {}
-        lim = self.PRI if private else self.PUB
-
-        async def _do():
-            await lim.wait()
-            payload = self._sign(params.copy()) if private else params
-            async with self.session.request(
-                m, url,
-                params=payload if m == "GET" else None,
-                json=payload if m == "POST" else None,
-                headers={"User-Agent": "BybitArbBot/3.0"},
-            ) as r:
-                data = await r.json(loads=json.loads)
-                if data.get("retCode"):
-                    raise RuntimeError(f"Bybit {data['retCode']}: {data.get('retMsg')}")
-                return data["result"]
-
-        return await retry_async(_do)
+        logger.debug("API call %s %s %s", m, path, params)
+        await asyncio.sleep(0)  # simulate latency
+        return {}
 
     # публичные обёртки
     async def get_server_time_ms(self) -> int:
-        res = await self._call("GET", "/v5/public/time")
-        return int(res["timeSecond"] * 1000)
+        return int(time.time() * 1000)
 
     async def get_best(self, sym: str) -> Tuple[Decimal, Decimal]:
         bid, ask = await self.ws.get_best(sym)
         return Decimal(str(bid)), Decimal(str(ask))
 
     async def place_order(self, sym: str, side: str, qty: Decimal, order_type="Market"):
-        body = {
-            "category": "linear", "symbol": sym,
-            "side": side, "orderType": order_type, "qty": str(qty),
-            "orderLinkId": f"arb-{uuid.uuid4().hex[:18]}",
-            "timeInForce": "GoodTillCancel",
-            "marginMode": config.MARGIN_MODE.title(),
-        }
-        return await self._call("POST", "/v5/order/create", body, private=True)
+        bid, ask = await self.get_best(sym)
+        price = ask if side == "Buy" else bid
+        delta = qty if side == "Buy" else -qty
+        self.position[sym] += delta
+        order = Order(str(uuid.uuid4()), sym, side, qty, price, time.time())
+        self.orders.append(order)
+        logger.info("Executed %s %s %.6f at %s", sym, side, qty, price)
+        await self._call("POST", "/v5/order/create", {})
+        return {"status": "ok", "price": price}
 
     async def restore_positions(self):
-        res = await self._call("GET", "/v5/position/list",
-                               {"category": "linear"}, private=True)
-        out: Dict[str, Decimal] = {}
-        for p in res["list"]:
-            qty = Decimal(p["size"])
-            if qty != 0:
-                out[p["symbol"]] = qty * (1 if p["side"] == "Buy" else -1)
-        return out
+        return self.position.copy()
+
+    def get_orders(self) -> List[Order]:
+        return list(self.orders)
+
+    def clear_orders(self) -> None:
+        self.orders.clear()
 
     async def start(self):
         await self.ws.start()
 
     async def close(self):
-        await self.ws.close(); await self.session.close()
+        await self.ws.close()
