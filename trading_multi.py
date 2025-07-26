@@ -73,3 +73,4 @@ class TradingBotMulti:
         PNL_TOTAL.labels(sym=sym).set(float(self.real[sym]))
 
     async def close(self): await self.client.close()
+
