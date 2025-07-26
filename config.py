@@ -45,10 +45,24 @@ RL_UPDATE_SEC = int(os.getenv("RL_UPDATE_SEC", "30"))
 RL_MIN_ROLLOUT= int(os.getenv("RL_MIN_ROLLOUT", "512"))
 RL_BUFFER_CAP = 2048
 
-PROM_HOST  = os.getenv("PROM_HOST", "0.0.0.0")
-PROM_PORT  = int(os.getenv("PROM_PORT", "9100"))
+PROM_HOST = os.getenv("PROM_HOST", "0.0.0.0")
+PROM_PORT = int(os.getenv("PROM_PORT", "9100"))
 
-LOG_LEVEL  = os.getenv("LOG_LEVEL", "INFO").upper()
-LOG_FILE   = LOG_DIR / "bot.log"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE  = LOG_DIR / "bot.log"
+
+EMAIL_ENABLED  = os.getenv("EMAIL_ENABLED", "0").lower() in ("1", "true", "yes")
+EMAIL_SENDER   = os.getenv("EMAIL_SENDER", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+ALERT_EMAILS   = os.getenv("ALERT_EMAILS", "")
+TG_BOT_TOKEN   = os.getenv("TG_BOT_TOKEN", "")
+TG_CHAT_ID     = os.getenv("TG_CHAT_ID", "")
+
+def get_model_path(sym: str) -> Path:
+    """Return RL model path for a trading pair."""
+    p = RL_MODEL_PATH
+    if "{sym}" in str(p):
+        return Path(str(p).format(sym=sym))
+    return p.with_name(f"{p.stem}_{sym}{p.suffix}")
 
 getcontext().prec = 18

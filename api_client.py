@@ -20,14 +20,24 @@ class _Limiter:
         self.calls.append(time.perf_counter())
 
 class APIClient:
+    """REST and WebSocket API wrapper with built‑in rate limiting."""
     PUB = _Limiter(150)
     PRI = _Limiter(60)
 
     def __init__(self):
         self.base, self.key, self.sec = (
             config.BYBIT_API_BASE_URL, config.API_KEY, config.API_SECRET.encode())
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.))
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=2.0)
+        )
         self.ws = WSManager(self)
+
+    async def __aenter__(self) -> "APIClient":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
 
     # подпись
     def _sign(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -87,7 +97,12 @@ class APIClient:
         return out
 
     async def start(self):
+        """Start background WebSocket streaming."""
         await self.ws.start()
 
     async def close(self):
+        """Close HTTP session and WebSocket connection."""
         await self.ws.close(); await self.session.close()
+
+
+
