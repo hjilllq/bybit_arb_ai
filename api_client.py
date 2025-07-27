@@ -2,7 +2,11 @@ from __future__ import annotations
 import asyncio, hashlib, hmac, json, logging, time, uuid
 from decimal import Decimal
 from typing import Any, Dict, Tuple
-import aiohttp, config
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - optional dependency
+    aiohttp = None
+import config
 from retry_utils import retry_async
 from ws_manager import WSManager
 
@@ -20,14 +24,26 @@ class _Limiter:
         self.calls.append(time.perf_counter())
 
 class APIClient:
+    """REST and WebSocket API wrapper with built‑in rate limiting."""
     PUB = _Limiter(150)
     PRI = _Limiter(60)
 
     def __init__(self):
+        if aiohttp is None:
+            raise ImportError("aiohttp is required for APIClient")
         self.base, self.key, self.sec = (
             config.BYBIT_API_BASE_URL, config.API_KEY, config.API_SECRET.encode())
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.))
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=2.0)
+        )
         self.ws = WSManager(self)
+
+    async def __aenter__(self) -> "APIClient":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
 
     # подпись
     def _sign(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -87,7 +103,12 @@ class APIClient:
         return out
 
     async def start(self):
+        """Start background WebSocket streaming."""
         await self.ws.start()
 
     async def close(self):
+        """Close HTTP session and WebSocket connection."""
         await self.ws.close(); await self.session.close()
+
+
+
