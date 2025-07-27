@@ -1,0 +1,118 @@
+from __future__ import annotations
+import asyncio, logging, os, signal
+from decimal import Decimal
+from alert_utils import ALERTS
+import config
+from monitoring import RISK_VIOLATIONS
+
+logger = logging.getLogger(__name__)
+
+class RiskManager:
+    """Monitor PnL and stop trading if losses exceed configured limits."""
+    CHECK_INTERVAL = 30  # seconds
+
+    def __init__(
+        self,
+        bot: "TradingBotMulti",
+        *,
+        interval: float | None = None,
+        high_water: Decimal | None = None,
+        sym_high_water: dict[str, Decimal] | None = None,
+    ) -> None:  # noqa: F821
+        self.bot = bot
+        if interval is not None:
+            self.CHECK_INTERVAL = interval
+        self.high_water = high_water if high_water is not None else Decimal()
+        self.sym_high_water = sym_high_water.copy() if sym_high_water else {}
+
+    async def watch(self) -> None:
+        while True:
+            await asyncio.sleep(self.CHECK_INTERVAL)
+            self.evaluate()
+
+    def evaluate(self) -> None:
+        pnl = sum(self.bot.real.values()) + sum(self.bot.unreal.values())
+        if pnl > self.high_water:
+            self.high_water = pnl
+        profit_limit = config.MAX_PROFIT_USD
+        if profit_limit > 0 and pnl >= profit_limit:
+            ALERTS.error(
+                f"Достигнута цель прибыли {profit_limit}$ ({pnl}$)"
+            )
+            RISK_VIOLATIONS.labels(type="profit").inc()
+            logger.warning("Останавливаем бота по достижению прибыли")
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.bot.shutdown("profit target"))
+            except RuntimeError:
+                asyncio.run(self.bot.shutdown("profit target"))
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+        if pnl <= -config.MAX_DRAWDOWN_USD:
+            ALERTS.error(
+                f"Порог убытка {config.MAX_DRAWDOWN_USD}$ превышен ({pnl}$)"
+            )
+            RISK_VIOLATIONS.labels(type="absolute").inc()
+            logger.warning("Останавливаем бота из-за превышения убытков")
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.bot.shutdown("drawdown"))
+            except RuntimeError:
+                asyncio.run(self.bot.shutdown("drawdown"))
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+        rel_limit = config.MAX_RELATIVE_DRAWDOWN_USD
+        if rel_limit > 0 and self.high_water - pnl >= rel_limit:
+            ALERTS.error(
+                f"Потеря {self.high_water - pnl}$ от пика превышает лимит"
+            )
+            RISK_VIOLATIONS.labels(type="relative").inc()
+            logger.warning("Останавливаем бота из-за относительной просадки")
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.bot.shutdown("relative drawdown"))
+            except RuntimeError:
+                asyncio.run(self.bot.shutdown("relative drawdown"))
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+        sym_limit = config.MAX_SYMBOL_DRAWDOWN_USD
+        sym_rel_limit = config.MAX_SYMBOL_REL_DRAWDOWN_USD
+        if sym_limit > 0 or sym_rel_limit > 0:
+            for sym in set(self.bot.real) | set(self.bot.unreal):
+                sym_pnl = self.bot.real.get(sym, 0) + self.bot.unreal.get(sym, 0)
+                high = self.sym_high_water.get(sym, Decimal())
+                if sym_pnl > high:
+                    high = sym_pnl
+                self.sym_high_water[sym] = high
+                if sym_limit > 0 and sym_pnl <= -sym_limit:
+                    ALERTS.error(
+                        f"Убыток по {sym} превысил {sym_limit}$ ({sym_pnl}$)"
+                    )
+                    RISK_VIOLATIONS.labels(type="symbol").inc()
+                    logger.warning(
+                        "Останавливаем бота из-за убытка по инструменту %s", sym
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self.bot.shutdown("symbol drawdown"))
+                    except RuntimeError:
+                        asyncio.run(self.bot.shutdown("symbol drawdown"))
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+                if sym_rel_limit > 0 and high - sym_pnl >= sym_rel_limit:
+                    ALERTS.error(
+                        f"Просадка {sym} от пика {high} составила {high - sym_pnl}$"
+                    )
+                    RISK_VIOLATIONS.labels(type="symbol_relative").inc()
+                    logger.warning(
+                        "Останавливаем бота из-за относ. просадки инструмента %s",
+                        sym,
+                    )
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self.bot.shutdown("symbol relative drawdown"))
+                    except RuntimeError:
+                        asyncio.run(self.bot.shutdown("symbol relative drawdown"))
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    return
+
